@@ -12,9 +12,18 @@ import firebase_admin
 from firebase_admin import credentials, auth
 import time
 import threading
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 last_known_data = []
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8000"],  # Allow Jupiter app
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
 
 cred = credentials.Certificate("C:\\provider_app\\serve-sandbox-firebase-adminsdk-4i44o-f4802f37ca.json")
 firebase_admin.initialize_app(cred)
@@ -194,6 +203,18 @@ def startup_event():
 async def read_root():
     return {"message": "Consumer application is running and listening for volunteer data"}
 
+@app.post("/trigger-serve-fetch")
+async def trigger_serve_fetch():
+    try:
+        print('In Trigger method')
+        structured_data = fetch_and_structure_serve_data()  # Fetch and structure data
+        if structured_data:
+            return JSONResponse({"message": "Serve data fetch successful.", "data": structured_data}, status_code=200)
+        else:
+            return JSONResponse({"message": "Error fetching or structuring data."}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 def fetch_and_structure_serve_data():
     global last_known_data
@@ -247,12 +268,30 @@ def fetch_and_structure_serve_data():
 
         # Compare the new data with the last known data to detect changes
         if structured_data != last_known_data:
-            print("New data detected; sending to RabbitMQ")
-            send_to_rabbitmq(structured_data)
+            print("New data detected; sending to RabbitMQ and Jupiter")
+            # send_to_rabbitmq(structured_data)  # Send data to RabbitMQ as needed
+            send_to_jupiter_api(structured_data)  # Send structured data to Jupiter endpoint
             last_known_data = structured_data  # Update the last known data
-
+        return structured_data
     except Exception as e:
         print(f"Error fetching or structuring data: {e}")
+
+
+def send_to_jupiter_api(data):
+    """Send structured data to Jupiter's receive_serve_data API endpoint."""
+    try:
+        for item in data:
+            response = requests.post(
+                "http://127.0.0.1:8000/api/receive-serve-data/",  # Replace with the actual Jupiter API URL
+                json=item,
+                headers={"Content-Type": "application/json"}
+            )
+            if response.status_code == 201:
+                print("Data sent to Jupiter successfully.")
+            else:
+                print("Failed to send data to Jupiter:", response.status_code, response.text)
+    except Exception as e:
+        print(f"Error sending data to Jupiter: {e}")
 
 # Function to send structured data to RabbitMQ
 def send_to_rabbitmq(data):
@@ -270,7 +309,7 @@ def send_to_rabbitmq(data):
                 properties=pika.BasicProperties(delivery_mode=2)
             )
             print("Data sent to RabbitMQ:", item)
-            send_data_to_jupiter(item)
+            
 
         connection.close()
     except Exception as e:
