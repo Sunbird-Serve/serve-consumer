@@ -203,95 +203,10 @@ def startup_event():
 async def read_root():
     return {"message": "Consumer application is running and listening for volunteer data"}
 
-@app.post("/trigger-serve-fetch")
-async def trigger_serve_fetch():
-    try:
-        print('In Trigger method')
-        structured_data = fetch_and_structure_serve_data()  # Fetch and structure data
-        if structured_data:
-            return JSONResponse({"message": "Serve data fetch successful.", "data": structured_data}, status_code=200)
-        else:
-            return JSONResponse({"message": "Error fetching or structuring data."}, status_code=500)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
 
 
-def fetch_and_structure_serve_data():
-    global last_known_data
-    try:
-        # Fetch data from Serve API
-        response = requests.get(
-            "https://serve-v1.evean.net/api/v1/serve-need/need/?page=0&status=Nominated"
-        )
-        response.raise_for_status()
-        serve_data = response.json().get("content", [])
-        print('Serve Data = ', serve_data)
-
-        # Process and structure data
-        structured_data = []
-        for item in serve_data:
-            structured_item = {
-                "need": {
-                    "description": item["need"]["description"].replace("\u003Cp\u003E", "").replace("\u003C/p\u003E", ""),
-                    "name": item["need"]["name"],
-                    "status": item["need"]["status"]
-                },
-                "occurrence": {
-                    "start_date": item["occurrence"]["startDate"],
-                    "end_date": item["occurrence"]["endDate"],
-                    "day": item["occurrence"]["days"],
-                    "frequency": item["occurrence"]["frequency"]
-                },
-                "time_slot": [
-                    {
-                        "start_time": time_slot["startTime"],
-                        "end_time": time_slot["endTime"],
-                        "day": time_slot["day"]
-                    } for time_slot in item["timeSlots"]
-                ],
-                "entity": {
-                    "name": item["entity"]["name"],
-                    "mobile": item["entity"]["mobile"],
-                    "address_line1": item["entity"]["address_line1"],
-                    "district": item["entity"]["district"],
-                    "state": item["entity"]["state"],
-                    "pincode": item["entity"]["pincode"],
-                    "category": item["entity"]["category"],
-                    "status": item["entity"]["status"]
-                },
-                "need_type": {
-                    "name": item["needType"]["name"],
-                    "status": item["needType"]["status"]
-                }
-            }
-            structured_data.append(structured_item)
-
-        # Compare the new data with the last known data to detect changes
-        if structured_data != last_known_data:
-            print("New data detected; sending to RabbitMQ and Jupiter")
-            # send_to_rabbitmq(structured_data)  # Send data to RabbitMQ as needed
-            send_to_jupiter_api(structured_data)  # Send structured data to Jupiter endpoint
-            last_known_data = structured_data  # Update the last known data
-        return structured_data
-    except Exception as e:
-        print(f"Error fetching or structuring data: {e}")
 
 
-def send_to_jupiter_api(data):
-    """Send structured data to Jupiter's receive_serve_data API endpoint."""
-    try:
-        for item in data:
-            response = requests.post(
-                "http://127.0.0.1:8000/api/receive-serve-data/",  # Replace with the actual Jupiter API URL
-                json=item,
-                headers={"Content-Type": "application/json"}
-            )
-            if response.status_code == 201:
-                print("Data sent to Jupiter successfully.")
-            else:
-                print("Failed to send data to Jupiter:", response.status_code, response.text)
-    except Exception as e:
-        print(f"Error sending data to Jupiter: {e}")
 
 # Function to send structured data to RabbitMQ
 def send_to_rabbitmq(data):
@@ -315,29 +230,70 @@ def send_to_rabbitmq(data):
     except Exception as e:
         print(f"Error sending data to RabbitMQ: {e}")
 
-# Scheduled task to check for updates periodically (e.g., every 5 minutes)
-def periodic_data_check(interval=300):
-    while True:
-        fetch_and_structure_serve_data()
-        time.sleep(interval)
-
-# Start the periodic check in a background thread on app startup
-@app.on_event("startup")
-def startup_event():
-    threading.Thread(target=periodic_data_check, args=(300,), daemon=True).start()
-
-def send_data_to_jupiter(structured_data):
+@app.post("/trigger-serve-fetch")
+def fetch_and_structure_serve_data():
+    global last_known_data
     try:
-        jupiter_url = "http://127.0.0.1:8000/api/receive-serve-data/"  # Replace with the actual domain or IP of Jupiter
-        headers = {"Content-Type": "application/json"}
-        
-        response = requests.post(jupiter_url, headers=headers, json=structured_data)
-        
-        if response.status_code == 201:
-            print("Data successfully sent to Jupiter.")
-        else:
-            print(f"Failed to send data to Jupiter: {response.status_code} - {response.text}")
+        # Connect to RabbitMQ
+        connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+        channel = connection.channel()
+        channel.queue_declare(queue="serve_data_queue", durable=True)
 
+        serve_data = []
+
+        # Fetch messages from RabbitMQ
+        method_frame, header_frame, body = channel.basic_get(queue="serve_data_queue", auto_ack=True)
+        while method_frame:
+            serve_data.append(json.loads(body))
+            method_frame, header_frame, body = channel.basic_get(queue="serve_data_queue", auto_ack=True)
+        
+        connection.close()
+
+        # Structure the data
+        structured_data = []
+        for item in serve_data:
+            structured_item = {
+                "need": {
+                    "description": item["need"]["description"].replace("\u003Cp\u003E", "").replace("\u003C/p\u003E", ""),
+                    "name": item["need"]["name"],
+                    "status": item["need"]["status"],
+                },
+                "occurrence": {
+                    "start_date": item["occurrence"]["startDate"],
+                    "end_date": item["occurrence"]["endDate"],
+                    "day": item["occurrence"]["days"],
+                    "frequency": item["occurrence"]["frequency"],
+                },
+                "time_slot": [
+                    {
+                        "start_time": time_slot["startTime"],
+                        "end_time": time_slot["endTime"],
+                        "day": time_slot["day"],
+                    }
+                    for time_slot in item["timeSlots"]
+                ],
+                "entity": {
+                    "name": item["entity"]["name"],
+                    "mobile": item["entity"]["mobile"],
+                    "address_line1": item["entity"]["address_line1"],
+                    "district": item["entity"]["district"],
+                    "state": item["entity"]["state"],
+                    "pincode": item["entity"]["pincode"],
+                    "category": item["entity"]["category"],
+                    "status": item["entity"]["status"],
+                },
+                "need_type": {
+                    "name": item["needType"]["name"],
+                    "status": item["needType"]["status"],
+                },
+            }
+            structured_data.append(structured_item)
+
+        last_known_data = structured_data
+
+        return JSONResponse({"data": structured_data, "message": "Serve data fetch successful."})
     except Exception as e:
-        print(f"Error sending data to Jupiter: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
