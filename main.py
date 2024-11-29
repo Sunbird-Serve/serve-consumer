@@ -19,7 +19,7 @@ app = FastAPI()
 last_known_data = []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8000"],  # Allow Jupiter app
+    allow_origins=["https://jupiter.evidyaloka.org/"],  # Allow Jupiter app
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
@@ -78,7 +78,7 @@ def process_volunteer_data(volunteer_data: dict):
     # Send the structured user data to the Serve API
     try:
         response_user = requests.post(
-            "https://serve-v1.evean.net/api/v1/serve-volunteering/user/",
+            "https://apswreis.evidyaloka.org/api/v1/serve-volunteering/user/",
             headers={"Content-Type": "application/json"},
             json=structured_data_user
         )
@@ -160,7 +160,7 @@ def process_volunteer_data(volunteer_data: dict):
 
             # Send the structured user profile data to the Serve API
             response_profile = requests.post(
-                "https://serve-v1.evean.net/api/v1/serve-volunteering/user/user-profile",
+                "https://apswreis.evidyaloka.org/api/v1/serve-volunteering/user/user-profile",
                 headers={"Content-Type": "application/json"},
                 json=structured_data_profile
             )
