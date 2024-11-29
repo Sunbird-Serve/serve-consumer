@@ -1,2 +1,2 @@
 # serve-consumer-volunteer
- A platform for seekers/consumers to connect with volunteers eager to fulfill their needs.
+ An adapter for seekers/consumers to connect with volunteers eager to fulfill their needs.
